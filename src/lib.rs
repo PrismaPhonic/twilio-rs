@@ -6,6 +6,7 @@ mod webhook;
 pub use call::{Call, OutboundCall};
 use headers::authorization::{Authorization, Basic};
 use headers::{ContentType, HeaderMapExt};
+use hyper::body::{Bytes, HttpBody};
 use hyper::client::connect::HttpConnector;
 use hyper::{Body, Method, StatusCode};
 use hyper_tls::HttpsConnector;
@@ -78,6 +79,13 @@ impl Client {
             auth_header: Authorization::basic(account_id, auth_token),
             http_client: hyper::Client::builder().build(HttpsConnector::new()),
         }
+    }
+
+    /// For account that need to provide a different SID in their URLs than they do in their
+    /// Authorization header, this method will override the SID in the URL, but not the auth
+    /// header.
+    pub fn set_account_sid(&mut self, account_sid: String) {
+        self.account_id = account_sid;
     }
 
     async fn send_request<T>(
