@@ -8,21 +8,19 @@ use headers::authorization::{Authorization, Basic};
 use headers::{ContentType, HeaderMapExt};
 use hyper::body::{Bytes, HttpBody};
 use hyper::client::connect::HttpConnector;
-use hyper::{Body, Method, StatusCode, Uri};
+use hyper::{Body, Method, StatusCode};
 use hyper_tls::HttpsConnector;
 pub use message::{Message, MessageStatus, OutboundMessage};
 use std::collections::BTreeMap;
-use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
 use url::form_urlencoded;
 
 pub const GET: Method = Method::GET;
 pub const POST: Method = Method::POST;
 pub const PUT: Method = Method::PUT;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
     account_id: String,
     auth_token: String,
