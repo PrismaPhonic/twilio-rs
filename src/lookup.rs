@@ -4,6 +4,7 @@ use arrayvec::{ArrayString, ArrayVec};
 use bitflags::bitflags;
 use compact_str::CompactString;
 use headers::HeaderMapExt;
+use bytes::Bytes;
 use http_body_util::{BodyExt as _, Either, Empty};
 use isocountry::CountryCode;
 use serde::de::Error;
@@ -12,7 +13,10 @@ use serde::{Deserialize, Deserializer};
 use crate::{Client, TwilioError};
 
 impl Client {
-    pub async fn lookup_phone_number(&self, number: u64) -> Result<PhoneNumberInfo, TwilioError> {
+    pub async fn lookup_phone_number(
+        &self,
+        number: u64,
+    ) -> Result<(PhoneNumberInfo, Bytes), TwilioError> {
         // TODO:  Accept Fields as an argument
         let url = format!(
             "https://lookups.twilio.com/v2/PhoneNumbers/+{number}?Fields=line_type_intelligence",
@@ -34,17 +38,16 @@ impl Client {
             return Err(TwilioError::HTTPError(status));
         }
 
-        let decoded = resp
+        let bytes = resp
             .into_body()
             .collect()
             .await
-            .map_err(TwilioError::ReadResponseError)
-            .and_then(|body| {
-                let bytes = body.to_bytes();
-                serde_json::from_slice(&bytes).map_err(|_| TwilioError::ParsingError)
-            })?;
+            .map_err(TwilioError::ReadResponseError)?
+            .to_bytes();
 
-        Ok(decoded)
+        let decoded = serde_json::from_slice(&bytes).map_err(|_| TwilioError::ParsingError)?;
+
+        Ok((decoded, bytes))
     }
 }
 
