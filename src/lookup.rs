@@ -12,17 +12,51 @@ use serde::{Deserialize, Deserializer};
 
 use crate::{Client, TwilioError};
 
+static PATH_PREFIX: &[u8] = b"/v2/PhoneNumbers/+";
+static QUERY_SUFFIX: &[u8] = b"?Fields=line_type_intelligence";
+
+fn phone_lookup_uri(number: u64) -> Result<http::Uri, TwilioError> {
+    use bytes::BufMut as _;
+
+    // E.164 numbers are at most 15 digits
+    if number >= 1_000_000_000_000_000 {
+        return Err(TwilioError::BadRequest);
+    }
+
+    // PATH_PREFIX(18) + max E.164 digits(15) + QUERY_SUFFIX(30) = 63 bytes max
+    let mut buf = bytes::BytesMut::with_capacity(63);
+    buf.extend_from_slice(PATH_PREFIX);
+
+    let digits_start = buf.len();
+    let mut n = number;
+    loop {
+        buf.put_u8(b'0' + (n % 10) as u8);
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    buf[digits_start..].reverse();
+
+    buf.extend_from_slice(QUERY_SUFFIX);
+
+    let path_and_query =
+        http::uri::PathAndQuery::from_maybe_shared(buf.freeze()).unwrap();
+
+    let mut parts = http::uri::Parts::default();
+    parts.scheme = Some(http::uri::Scheme::HTTPS);
+    parts.authority = Some(http::uri::Authority::from_static("lookups.twilio.com"));
+    parts.path_and_query = Some(path_and_query);
+
+    Ok(http::Uri::from_parts(parts).unwrap())
+}
+
 impl Client {
     pub async fn lookup_phone_number(
         &self,
         number: u64,
     ) -> Result<(PhoneNumberInfo, Bytes), TwilioError> {
-        // TODO:  Accept Fields as an argument
-        let url = format!(
-            "https://lookups.twilio.com/v2/PhoneNumbers/+{number}?Fields=line_type_intelligence",
-        );
-
-        let mut req = hyper::Request::get(url)
+        let mut req = hyper::Request::get(phone_lookup_uri(number)?)
             .body(Either::Left(Empty::new()))
             .unwrap();
         req.headers_mut().typed_insert(self.auth_header.clone());
@@ -160,6 +194,32 @@ impl<'de> Deserialize<'de> for ValidationErrors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_phone_lookup_uri() {
+        let cases: &[u64] = &[
+            1,
+            9,
+            10,
+            99,
+            1_000_000,
+            14155552671,
+            999_999_999_999_999, // max 15-digit E.164
+        ];
+        for &number in cases {
+            let got = phone_lookup_uri(number).unwrap().to_string();
+            let expected = format!(
+                "https://lookups.twilio.com/v2/PhoneNumbers/+{number}?Fields=line_type_intelligence"
+            );
+            assert_eq!(got, expected, "mismatch for number {number}");
+        }
+    }
+
+    #[test]
+    fn test_phone_lookup_uri_rejects_too_long() {
+        assert!(phone_lookup_uri(1_000_000_000_000_000).is_err());
+        assert!(phone_lookup_uri(u64::MAX).is_err());
+    }
 
     #[test]
     fn test_deserialize_validation_errors() {
