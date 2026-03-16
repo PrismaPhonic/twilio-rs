@@ -2,9 +2,9 @@ use core::num::NonZeroU32;
 
 use arrayvec::{ArrayString, ArrayVec};
 use bitflags::bitflags;
+use bytes::Bytes;
 use compact_str::CompactString;
 use headers::HeaderMapExt;
-use bytes::Bytes;
 use http_body_util::{BodyExt as _, Either, Empty};
 use isocountry::CountryCode;
 use serde::de::Error;
@@ -40,15 +40,20 @@ fn phone_lookup_uri(number: u64) -> Result<http::Uri, TwilioError> {
 
     buf.extend_from_slice(QUERY_SUFFIX);
 
-    let path_and_query =
-        http::uri::PathAndQuery::from_maybe_shared(buf.freeze()).unwrap();
+    let path_and_query = http::uri::PathAndQuery::from_maybe_shared(buf.freeze())
+        .expect("PathAndQuery from Bytes is infallable");
 
     let mut parts = http::uri::Parts::default();
     parts.scheme = Some(http::uri::Scheme::HTTPS);
-    parts.authority = Some(http::uri::Authority::from_static("lookups.twilio.com"));
+    parts.authority = Some(
+        http::uri::Authority::from_maybe_shared(Bytes::from_static(
+            "lookups.twilio.com".as_bytes(),
+        ))
+        .expect("Authority from known good authority is infallable"),
+    );
     parts.path_and_query = Some(path_and_query);
 
-    Ok(http::Uri::from_parts(parts).unwrap())
+    Ok(http::Uri::from_parts(parts).expect("Uri from all parts is infallable"))
 }
 
 impl Client {
@@ -193,6 +198,8 @@ impl<'de> Deserialize<'de> for ValidationErrors {
 
 #[cfg(test)]
 mod tests {
+    use bytes::BytesMut;
+
     use super::*;
 
     #[test]
@@ -219,6 +226,32 @@ mod tests {
     fn test_phone_lookup_uri_rejects_too_long() {
         assert!(phone_lookup_uri(1_000_000_000_000_000).is_err());
         assert!(phone_lookup_uri(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn test_oversized_bytes_matches() {
+        use bytes::BufMut as _;
+
+        let mut buf = BytesMut::with_capacity(63);
+
+        buf.extend_from_slice(PATH_PREFIX);
+
+        let digits_start = buf.len();
+        let mut n: u64 = 12_345_678_987;
+        loop {
+            buf.put_u8(b'0' + (n % 10) as u8);
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        buf[digits_start..].reverse();
+
+        buf.extend_from_slice(QUERY_SUFFIX);
+
+        let expected = Bytes::from("/v2/PhoneNumbers/+12345678987?Fields=line_type_intelligence");
+
+        assert_eq!(buf.freeze(), expected);
     }
 
     #[test]
